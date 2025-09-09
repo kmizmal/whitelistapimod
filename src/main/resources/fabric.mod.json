@@ -1,0 +1,35 @@
+{
+	"schemaVersion": 1,
+	"id": "whitelistapimod",
+	"version": "${version}",
+	"name": "WhitelistApiMod",
+	"description": "创建一个安全的接口实现添加白名单操作",
+	"authors": [
+		"zmal"
+	],
+	"contact": {
+		"homepage": "https://blog.zmal.top/",
+		"sources": "https://github.com/kmizmal/whitelistapimod"
+	},
+	"license": "GPL",
+	"icon": "assets/whitelistapimod/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			{
+				"value": "com.zmal.whitelistapi.WhitelistApiMod",
+				"adapter": "kotlin"
+			}
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.17.2",
+		"minecraft": "~1.21.1",
+		"java": ">=21",
+		"fabric-api": "*",
+		"fabric-language-kotlin": "*"
+	},
+	"suggests": {
+		"another-mod": "*"
+	}
+}
