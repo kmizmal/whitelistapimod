@@ -1,13 +1,13 @@
 # whitelistapimod
 
-一个 **Fabric 模组**，提供 HTTP API 用于安全高效地管理 Minecraft 服务器白名单。
-> 理论上支持全部版本，目但前仅在1.21.1和1.21.8上通过测试
+一个 **Fabric 模组**，提供 HTTP API 用于安全高效地管理 Minecraft 服务器。
+> 理论上支持全部版本，目但前仅在1.21.1,1.21.7,1.21.8上通过测试
 
 ---
 
 ## ✨ 功能特性
 
-* 提供 **HTTP API** 白名单管理接口
+* 提供 **HTTP API** 管理接口
 * **基于令牌的身份验证**，保证访问安全
 * **简单配置**，上手即用
 * **支持热重载配置**，无需重启服务器
@@ -50,16 +50,28 @@
 
 ### API 接口
 
-**添加玩家至白名单**
+**请求头需包含：**
+
+```
+Authorization: Bearer your_token_here
+```
+
+- **添加玩家至白名单**
 
 ```
 GET http://yourserver:port/whitelist/add?player=PlayerName
 ```
 
-**请求头需包含：**
+- **添加玩家至白名单**
 
 ```
-Authorization: Bearer your_token_here
+GET http://yourserver:port/whitelist/remove?player=PlayerName
+```
+
+- **获取服务器tps**
+
+```
+GET http://yourserver:port/server/tps
 ```
 
 ### 示例请求
