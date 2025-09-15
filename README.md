@@ -96,7 +96,6 @@ curl -H "Authorization: Bearer your_token_here" "http://localhost:6626/whitelist
 
 1. **务必修改默认令牌**，避免泄露风险
 2. 建议通过 **防火墙** 限制 API 端口访问
-3. 当前 API 仅支持 **添加玩家**（不支持移除）
 
 ---
 
@@ -108,6 +107,6 @@ curl -H "Authorization: Bearer your_token_here" "http://localhost:6626/whitelist
 
 ## 🔗 兼容性
 
-理论上可与任意 Fabric 模组兼容。
+理论上与任意 Fabric 模组兼容。
 如遇到冲突，欢迎打开一个[issue](https://github.com/kmizmal/whitelistapimod/issues/new)
 
