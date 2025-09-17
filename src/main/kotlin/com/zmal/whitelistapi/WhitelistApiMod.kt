@@ -34,6 +34,11 @@ object WhitelistApiMod : ModInitializer {
     override fun onInitialize() {
         config = loadConfig()
 
+        PlayerStatsManager.initAll()
+        PlayerStatsManager.WhitelistCache.loadCache()
+
+//        logger.info(PlayerStatsManager.statsMap.toString())
+
         ServerLifecycleEvents.SERVER_STARTED.register { server ->
             mcServer = server
             if (!started) {
@@ -88,6 +93,7 @@ object WhitelistApiMod : ModInitializer {
         }
 
     }
+
     private fun calculateTps(): Double {
         if (tickTimes.size < 2) {
             return 0.0
@@ -136,6 +142,7 @@ object WhitelistApiMod : ModInitializer {
         httpServer!!.createContext("/whitelist/add", AddWhitelistHandler())
         httpServer!!.createContext("/whitelist/remove", RemoveWhitelistHandler())
         httpServer!!.createContext("/server/tps", GetTpsHandler())
+        httpServer!!.createContext("/server/playStats", GetStats())
         httpServer!!.executor = null
         httpServer!!.start()
         logger.info("[WhitelistAPI] HTTP server started at port $port")
@@ -178,6 +185,7 @@ object WhitelistApiMod : ModInitializer {
 
 
             sendResponse(exchange, 200, "Player $player added to whitelist")
+            PlayerStatsManager.WhitelistCache.loadCache()
             logger.info("Player $player added to whitelist")
         }
     }
@@ -218,6 +226,7 @@ object WhitelistApiMod : ModInitializer {
             }
 
             sendResponse(exchange, 200, "Player $player removed from whitelist")
+            PlayerStatsManager.WhitelistCache.loadCache()
             logger.info("Player $player removed from whitelist")
         }
     }
@@ -239,16 +248,67 @@ object WhitelistApiMod : ModInitializer {
 
             // 获取当前 TPS
 
-                sendResponse(exchange, 200, currentTps.toString())
+            sendResponse(exchange, 200, currentTps.toString())
 
         }
     }
 
+    class GetStats : HttpHandler {
+        @Throws(IOException::class)
+        override fun handle(exchange: HttpExchange) {
+            if (!"GET".equals(exchange.requestMethod, ignoreCase = true)) {
+                sendResponse(exchange, 405, "Method Not Allowed")
+                return
+            }
+
+            // 鉴权
+            val auth = exchange.requestHeaders.getFirst("Authorization")
+            if (auth == null || auth != "Bearer " + config?.token) {
+                sendResponse(exchange, 401, "Unauthorized")
+                return
+            }
+
+            // 获取参数
+            val query = exchange.requestURI.query  // ?player=Steve
+            if (query == null || !query.startsWith("player=")) {
+                sendResponse(exchange, 400, "Bad Request: missing player")
+                return
+            }
+
+            val player = query.substring("player=".length)
+
+            val uuid = PlayerStatsManager.WhitelistCache.getUUID(player)
+
+            logger.info("uuid $uuid")
+            // 获取玩家的 stats 信息
+            val playerStats = PlayerStatsManager.statsMap[uuid.toString()]
+
+            // 如果找不到玩家 stats，返回 404
+            if (playerStats == null) {
+                sendResponse(exchange, 404, "Player stats not found")
+                uuid?.let { PlayerStatsManager.reflash(it) }
+                return
+            }
+
+            // 返回玩家的 stats 信息，作为 JSON 格式
+            sendResponse(exchange, 200, Gson().toJson(playerStats), "application/json")
+            uuid?.let { PlayerStatsManager.reflash(it) }
+        }
+    }
+
+
     @Throws(IOException::class)
-    private fun sendResponse(exchange: HttpExchange, status: Int, body: String) {
+    private fun sendResponse(exchange: HttpExchange, status: Int, body: String, contentType: String = "text/plain") {
+        // 设置响应头，指定 Content-Type
         exchange.sendResponseHeaders(status, body.toByteArray(StandardCharsets.UTF_8).size.toLong())
+
+        // 设置响应头的 Content-Type，默认为 text/plain
+        exchange.responseHeaders["Content-Type"] = listOf(contentType)
+
+        // 写入响应体
         exchange.responseBody.use { os ->
             os.write(body.toByteArray(StandardCharsets.UTF_8))
         }
     }
+
 }
