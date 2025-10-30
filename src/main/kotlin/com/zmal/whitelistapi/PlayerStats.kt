@@ -2,99 +2,92 @@ package com.zmal.whitelistapi
 
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
-
+import java.util.concurrent.ConcurrentHashMap
 
 object PlayerStatsManager {
     private val gson = Gson()
-    val statsMap = mutableMapOf<String, MutableMap<String, Any>>()
     private val statsDir = File("world/stats")
-    private val files = statsDir.listFiles { file -> file.extension == "json" }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    data class PlayerStats(
+        val uuid: String,
+        val custom: Map<String, Any>,
+        val mined: Map<String, Any>,
+        val crafted: Map<String, Any>,
+        val used: Map<String, Any>,
+        val killed: Map<String, Any>
+    )
+
+    val statsMap: MutableMap<String, PlayerStats> = ConcurrentHashMap()
 
     // 异步初始化所有文件
-    @OptIn(DelicateCoroutinesApi::class)
     fun initAll() {
-        // 使用协程启动异步任务
-        GlobalScope.launch {
-            // 使用协程并行解析所有文件
-            files?.let { files ->
-                val deferredResults = files.map { file ->
-                    async {
-                        try {
-                            val jsonString = file.readText()
-                            // 使用 TypeToken 明确指定类型
-                            val type = object : TypeToken<Map<String, Any>>() {}.type
+        scope.launch {
+            val files = statsDir.listFiles { file -> file.extension == "json" } ?: return@launch
+            val results = files.map { file ->
+                async { parseStatsFile(file) }
+            }.awaitAll()
 
-                            // 解析 JSON 为 Map<String, Any>
-                            val playerStats: Map<String, Any> = gson.fromJson(jsonString, type)
-
-                            file.name.substringBeforeLast(".") to playerStats["stats"]
-                        } catch (e: Exception) {
-                            println("Error parsing file ${file.name}: ${e.message}")
-                            e.printStackTrace()
-                            file.name to emptyMap<String, Any>()
-                        }
-                    }
-                }
-
-                // 等待所有文件解析完成，并将结果存储到 statsMap
-                deferredResults.awaitAll().forEach { (fileName, playerStats) ->
-                    // 获取当前 Map 或者初始化一个新的空 Map
-                    val currentStats = statsMap[fileName] ?: mutableMapOf()
-
-                    // 更新 currentStats 中的键值对
-                    if (playerStats is Map<*, *>) {
-                        currentStats["uuid"]    = fileName
-                        currentStats["custom"]  = playerStats["minecraft:custom"] ?: emptyMap<String, Any>()
-                        currentStats["mined"]   = playerStats["minecraft:mined"] ?: emptyMap<String, Any>()
-                        currentStats["crafted"] = playerStats["minecraft:crafted"] ?: emptyMap<String, Any>()
-                        currentStats["used"]    = playerStats["minecraft:used"] ?: emptyMap<String, Any>()
-                        currentStats["killed"]  = playerStats["minecraft:killed"] ?: emptyMap<String, Any>()
-                    }
-                    statsMap[fileName] = currentStats
-                }
+            results.filterNotNull().forEach { stats ->
+                statsMap[stats.uuid] = stats
             }
         }
     }
 
-    @OptIn(DelicateCoroutinesApi::class)
     fun reflash(uuid: UUID) {
-        // 查找对应的文件
         val file = File(statsDir, "$uuid.json")
 
-        if (file.exists()) {
-            GlobalScope.launch {
-                try {
-                    val jsonString = file.readText()
-
-                    val playerStats: Map<String, Any> = gson.fromJson(jsonString, object : TypeToken<Map<String, Any>>() {}.type)
-                    val stats = (playerStats["stats"] as? Map<*, *>) ?: emptyMap<String, Any>()
-                    // 更新 statsMap 中的该 uuid 的数据
-                    val currentStats = statsMap[uuid.toString()] ?: mutableMapOf()
-
-                    // 更新 currentStats 中的键值对
-                     currentStats["uuid"]    =uuid
-                     currentStats["custom"]  =stats["minecraft:custom"] ?: emptyMap<String, Any>()
-                     currentStats["mined"]   =stats["minecraft:mined"] ?: emptyMap<String, Any>()
-                     currentStats["crafted"] =stats["minecraft:crafted"] ?: emptyMap<String, Any>()
-                     currentStats["used"]    =stats["minecraft:mined"] ?: emptyMap<String, Any>()
-                     currentStats["killed"]  =stats["minecraft:killed"] ?: emptyMap<String, Any>()
-
-                    // 将修改后的 Map 放回 statsMap
-                    statsMap[uuid.toString()] = currentStats
-
-                } catch (e: Exception) {
-                    println("Error refreshing stats for UUID $uuid: ${e.message}")
-                    e.printStackTrace()
-                }
-            }
-        } else {
+        if (!file.exists()) {
             println("File for UUID $uuid does not exist.")
+            return
+        }
+
+        scope.launch {
+            parseStatsFile(file)?.let { stats ->
+                statsMap[uuid.toString()] = stats
+            }
         }
     }
 
+    private fun parseStatsFile(file: File): PlayerStats? {
+        return try {
+            val jsonString = file.readText()
+            val type = object : TypeToken<Map<String, Any>>() {}.type
+            val playerStats: Map<String, Any> = gson.fromJson(jsonString, type)
+            val stats = playerStats["stats"] as? Map<*, *>
+            val uuid = file.name.substringBeforeLast(".")
+
+            PlayerStats(
+                uuid = uuid,
+                custom = extractSection(stats, "minecraft:custom"),
+                mined = extractSection(stats, "minecraft:mined"),
+                crafted = extractSection(stats, "minecraft:crafted"),
+                used = extractSection(stats, "minecraft:used"),
+                killed = extractSection(stats, "minecraft:killed")
+            )
+        } catch (e: Exception) {
+            println("Error parsing file ${file.name}: ${e.message}")
+            e.printStackTrace()
+            null
+        }
+    }
+
+    private fun extractSection(stats: Map<*, *>?, key: String): Map<String, Any> {
+        val rawSection = stats?.get(key) as? Map<*, *> ?: return emptyMap()
+        return rawSection.entries.mapNotNull { (k, v) ->
+            val keyString = k?.toString() ?: return@mapNotNull null
+            val value = v ?: return@mapNotNull null
+            keyString to value
+        }.toMap()
+    }
 
     data class WhitelistEntry(
         val uuid: String, val name: String, val allowed: Boolean
@@ -102,23 +95,23 @@ object PlayerStatsManager {
 
     object WhitelistCache {
         private val gson = Gson()
-        private var cache: Map<String, UUID> = mutableMapOf()
+        private val cache: MutableMap<String, UUID> = ConcurrentHashMap()
 
         // 初始化缓存
-        @OptIn(DelicateCoroutinesApi::class)
         fun loadCache() {
-            GlobalScope.launch {
+            scope.launch {
                 val file = File("whitelist.json")
                 if (!file.exists()) {
                     println("whitelist.json not found.")
+                    cache.clear()
                     return@launch
                 }
 
                 val type = object : TypeToken<List<WhitelistEntry>>() {}.type
                 val whitelistEntries: List<WhitelistEntry> = gson.fromJson(file.readText(), type)
 
-                // 使用玩家名称作为键，UUID 作为值，建立缓存
-                cache = whitelistEntries.associate { it.name.lowercase() to UUID.fromString(it.uuid) }
+                cache.clear()
+                cache.putAll(whitelistEntries.associate { it.name.lowercase() to UUID.fromString(it.uuid) })
                 println("Whitelist cache loaded with ${cache.size} entries.")
             }
         }
@@ -127,7 +120,5 @@ object PlayerStatsManager {
         fun getUUID(playerName: String): UUID? {
             return cache[playerName.lowercase()]
         }
-
     }
-
 }
