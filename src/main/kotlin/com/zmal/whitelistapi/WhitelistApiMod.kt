@@ -18,6 +18,8 @@ import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 
 object WhitelistApiMod : ModInitializer {
@@ -25,6 +27,7 @@ object WhitelistApiMod : ModInitializer {
     var mcServer: MinecraftServer? = null
     var config: Config? = null
     private var httpServer: HttpServer? = null
+    private var httpExecutor: ExecutorService? = null
     private var started = false
 
     private var tickTimes = mutableListOf<Long>()
@@ -51,6 +54,9 @@ object WhitelistApiMod : ModInitializer {
         }
         ServerLifecycleEvents.SERVER_STOPPED.register {
             httpServer?.stop(0)
+            httpExecutor?.shutdownNow()
+            httpExecutor = null
+            httpServer = null
             logger.info(" HTTP server stopped")
             started = false
         }
@@ -59,6 +65,9 @@ object WhitelistApiMod : ModInitializer {
                 literal("wla").then(
                     literal("reload").executes { _ ->
                         httpServer?.stop(0)
+                        httpExecutor?.shutdownNow()
+                        httpExecutor = null
+                        httpServer = null
                         Thread.sleep(500)
                         logger.info(" HTTP server stopped for reload")
                         config = loadConfig()
@@ -137,14 +146,25 @@ object WhitelistApiMod : ModInitializer {
             }
         }
 
-        httpServer!!.createContext("/whitelist/add", AddWhitelistHandler())
-        httpServer!!.createContext("/whitelist/remove", RemoveWhitelistHandler())
-        httpServer!!.createContext("/server/tps", GetTpsHandler())
-        httpServer!!.createContext("/server/playStats", GetStats())
-        httpServer!!.executor = null
-        httpServer!!.start()
-        if (httpServer != null) logger.info(" HTTP server started at port $port")
-        else logger.error("启动异常")
+        val server = httpServer ?: throw IllegalStateException("HttpServer must be initialized before configuring contexts")
+        server.createContext("/whitelist/add", AddWhitelistHandler())
+        server.createContext("/whitelist/remove", RemoveWhitelistHandler())
+        server.createContext("/server/tps", GetTpsHandler())
+        server.createContext("/server/playStats", GetStats())
+        httpExecutor?.shutdownNow()
+        httpExecutor = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "WhitelistAPI-HttpServer").apply { isDaemon = false }
+        }
+        server.executor = httpExecutor
+
+        Thread({
+            try {
+                server.start()
+                logger.info(" HTTP server started at port $port")
+            } catch (e: Exception) {
+                logger.error("Failed to start HTTP server on dedicated thread", e)
+            }
+        }, "WhitelistAPI-HttpServer-Starter").apply { isDaemon = false }.start()
 
 
     }
