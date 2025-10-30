@@ -21,15 +21,15 @@ import java.nio.file.Path
 
 
 object WhitelistApiMod : ModInitializer {
-    private val logger = LoggerFactory.getLogger("whitelistapimod")
+    private val logger = LoggerFactory.getLogger("WhitelistAPI")
     var mcServer: MinecraftServer? = null
     var config: Config? = null
     private var httpServer: HttpServer? = null
     private var started = false
 
-    private var tickTimes = mutableListOf<Long>()  // 存储每个 tick 的时间
-    private const val MAX_TICK_HISTORY = 100  // 保留最近 100 次 tick 的数据，用于计算TPS
-    private var currentTps = 0.0  // 存储当前TPS
+    private var tickTimes = mutableListOf<Long>()
+    private const val MAX_TICK_HISTORY = 100
+    @Volatile private var currentTps = 0.0
 
     override fun onInitialize() {
         config = loadConfig()
@@ -37,7 +37,6 @@ object WhitelistApiMod : ModInitializer {
         PlayerStatsManager.initAll()
         PlayerStatsManager.WhitelistCache.loadCache()
 
-//        logger.info(PlayerStatsManager.statsMap.toString())
 
         ServerLifecycleEvents.SERVER_STARTED.register { server ->
             mcServer = server
@@ -52,7 +51,7 @@ object WhitelistApiMod : ModInitializer {
         }
         ServerLifecycleEvents.SERVER_STOPPED.register {
             httpServer?.stop(0)
-            logger.info("[WhitelistAPI] HTTP server stopped")
+            logger.info(" HTTP server stopped")
             started = false
         }
         CommandRegistrationCallback.EVENT.register { dispatcher, _, _ ->
@@ -61,7 +60,7 @@ object WhitelistApiMod : ModInitializer {
                     literal("reload").executes { _ ->
                         httpServer?.stop(0)
                         Thread.sleep(500)
-                        logger.info("[WhitelistAPI] HTTP server stopped for reload")
+                        logger.info(" HTTP server stopped for reload")
                         config = loadConfig()
                         try {
                             startHttpServer()
@@ -79,10 +78,9 @@ object WhitelistApiMod : ModInitializer {
         }
 
         ServerTickEvents.START_SERVER_TICK.register { _ ->
-            val currentTickTime = System.nanoTime()  // 获取当前tick时间的时间戳（纳秒）
+            val currentTickTime = System.nanoTime()
             tickTimes.add(currentTickTime)
 
-            // 保证 tickTimes 不会超过历史记录最大数
             if (tickTimes.size > MAX_TICK_HISTORY) {
                 tickTimes.removeAt(0)
             }
@@ -100,10 +98,10 @@ object WhitelistApiMod : ModInitializer {
         }
 
         val totalTime = tickTimes.last() - tickTimes.first()  // 总时间
-        val ticks = tickTimes.size - 1  // 总的 tick 数量
+        val ticks = tickTimes.size - 1
 
         // 计算每秒的平均TPS，单位为每秒
-        val seconds = totalTime / 1_000_000_000.0  // 转换为秒
+        val seconds = totalTime / 1_000_000_000.0
         return ticks / seconds
     }
 
@@ -145,7 +143,8 @@ object WhitelistApiMod : ModInitializer {
         httpServer!!.createContext("/server/playStats", GetStats())
         httpServer!!.executor = null
         httpServer!!.start()
-        logger.info("[WhitelistAPI] HTTP server started at port $port")
+        if (httpServer != null) logger.info(" HTTP server started at port $port")
+        else logger.error("启动异常")
 
 
     }
@@ -177,11 +176,12 @@ object WhitelistApiMod : ModInitializer {
             // 在 MC 主线程执行
             mcServer?.let { server ->
                 server.execute {
-                    server.commandManager.executeWithPrefix(
-                        server.commandSource, "whitelist add $player"
+                    server.commandManager.dispatcher.execute(
+                        "whitelist add $player", server.commandSource
                     )
                 }
             }
+
 
 
             sendResponse(exchange, 200, "Player $player added to whitelist")
@@ -207,7 +207,6 @@ object WhitelistApiMod : ModInitializer {
                 return
             }
 
-            // 获取参数
             val query = exchange.requestURI.query  // ?player=Steve
             if (query == null || !query.startsWith("player=")) {
                 sendResponse(exchange, 400, "Bad Request: missing player")
@@ -219,11 +218,12 @@ object WhitelistApiMod : ModInitializer {
             // 在 MC 主线程执行
             mcServer?.let { server ->
                 server.execute {
-                    server.commandManager.executeWithPrefix(
-                        server.commandSource, "whitelist remove $player"
+                    server.commandManager.dispatcher.execute(
+                        "whitelist remove $player", server.commandSource
                     )
                 }
             }
+
 
             sendResponse(exchange, 200, "Player $player removed from whitelist")
             PlayerStatsManager.WhitelistCache.loadCache()
@@ -239,14 +239,11 @@ object WhitelistApiMod : ModInitializer {
                 return
             }
 
-            // 鉴权
             val auth = exchange.requestHeaders.getFirst("Authorization")
             if (auth == null || auth != "Bearer " + config?.token) {
                 sendResponse(exchange, 401, "Unauthorized")
                 return
             }
-
-            // 获取当前 TPS
 
             sendResponse(exchange, 200, currentTps.toString())
 
@@ -261,7 +258,6 @@ object WhitelistApiMod : ModInitializer {
                 return
             }
 
-            // 鉴权
             val auth = exchange.requestHeaders.getFirst("Authorization")
             if (auth == null || auth != "Bearer " + config?.token) {
                 sendResponse(exchange, 401, "Unauthorized")
@@ -291,7 +287,7 @@ object WhitelistApiMod : ModInitializer {
             }
 
             // 返回玩家的 stats 信息，作为 JSON 格式
-            sendResponse(exchange, 200, Gson().toJson(playerStats), "application/json")
+            sendResponse(exchange, 200, Gson().toJson(playerStats), "application/json; charset=utf-8")
             uuid?.let { PlayerStatsManager.reflash(it) }
         }
     }
@@ -303,7 +299,7 @@ object WhitelistApiMod : ModInitializer {
         exchange.sendResponseHeaders(status, body.toByteArray(StandardCharsets.UTF_8).size.toLong())
 
         // 设置响应头的 Content-Type，默认为 text/plain
-        exchange.responseHeaders["Content-Type"] = listOf(contentType)
+        exchange.responseHeaders.add("Content-Type", contentType)
 
         // 写入响应体
         exchange.responseBody.use { os ->
